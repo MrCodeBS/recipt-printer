@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Receipt Printer</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        /* Bluetooth Menu Styles */
+        .bluetooth-menu {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            z-index: 1000;
+            min-width: 300px;
+        }
+
+        .bluetooth-menu.active {
+            display: block;
+        }
+
+        .bluetooth-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 999;
+        }
+
+        .bluetooth-overlay.active {
+            display: block;
+        }
+
+        .device-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 15px 0;
+        }
+
+        .device-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            border: 1px solid #ddd;
+            margin: 5px 0;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .device-item:hover {
+            background-color: #f0f0f0;
+        }
+
+        .device-icon {
+            margin-right: 10px;
+            width: 24px;
+            height: 24px;
+            background-color: #007bff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        .scanning-animation {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Original Styles */
+        .order-form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .item-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        input, button {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        .remove-item {
+            background-color: #dc3545;
+        }
+
+        .remove-item:hover {
+            background-color: #c82333;
+        }
+
+        #preview {
+            font-family: monospace;
+            white-space: pre;
+            background-color: #f8f9fa;
+            padding: 15px;
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Receipt Printer</h1>
+        
+        <div class="order-form">
+            <div class="item-row">
+                <input type="text" class="item-name" placeholder="Item name">
+                <input type="number" class="item-price" placeholder="Price" min="0" step="0.01">
+                <input type="number" class="item-quantity" placeholder="Qty" min="1" value="1">
+                <button onclick="addItem()">Add Item</button>
+            </div>
+
+            <div id="items-list"></div>
+
+            <button onclick="showBluetoothMenu()">Connect to Printer</button>
+            <button onclick="printReceipt()">Print Receipt</button>
+        </div>
+
+        <div id="preview"></div>
+        <div id="status"></div>
+    </div>
+
+    <!-- Custom Bluetooth Menu -->
+    <div class="bluetooth-overlay" id="bluetoothOverlay">
+        <div class="bluetooth-menu" id="bluetoothMenu">
+            <h2>Connect to Printer</h2>
+            <div id="scanning">
+                <div class="scanning-animation"></div>
+                Scanning for devices...
+            </div>
+            <div class="device-list" id="deviceList"></div>
+            <button onclick="scanForDevices()">Scan Again</button>
+            <button onclick="hideBluetoothMenu()">Cancel</button>
+        </div>
+    </div>
+
+    <script>
+        let items = [];
+        let bluetoothDevice = null;
+        let bluetoothCharacteristic = null;
+
+        // Show Bluetooth Menu
+        function showBluetoothMenu() {
+            document.getElementById('bluetoothOverlay').classList.add('active');
+            document.getElementById('bluetoothMenu').classList.add('active');
+            scanForDevices();
+        }
+
+        // Hide Bluetooth Menu
+        function hideBluetoothMenu() {
+            document.getElementById('bluetoothOverlay').classList.remove('active');
+            document.getElementById('bluetoothMenu').classList.remove('active');
+        }
+
+        // Scan for Bluetooth devices
+        async function scanForDevices() {
+            const deviceList = document.getElementById('deviceList');
+            deviceList.innerHTML = '';
+            document.getElementById('scanning').style.display = 'block';
+
+            try {
+                // First try to get paired devices
+                if ('getDevices' in navigator.bluetooth) {
+                    const pairedDevices = await navigator.bluetooth.getDevices();
+                    pairedDevices.forEach(device => {
+                        addDeviceToList(device, true);
+                    });
+                }
+
+                // Then scan for new devices
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: ['generic_access', 'generic_attribute']
+                });
+                
+                addDeviceToList(device, false);
+            } catch (error) {
+                const status = document.getElementById('status');
+                status.textContent = `Scanning failed: ${error.message}`;
+                status.className = 'status error';
+            }
+
+            document.getElementById('scanning').style.display = 'none';
+        }
+
+        // Add device to the list
+        function addDeviceToList(device, isPaired) {
+            const deviceList = document.getElementById('deviceList');
+            const deviceItem = document.createElement('div');
+            deviceItem.className = 'device-item';
+            deviceItem.innerHTML = `
+                <div class="device-icon">🖨️</div>
+                <div>
+                    <strong>${device.name || 'Unknown Device'}</strong><br>
+                    ${isPaired ? '<small>Paired</small>' : ''}
+                </div>
+            `;
+            deviceItem.onclick = () => connectToDevice(device);
+            deviceList.appendChild(deviceItem);
+        }
+
+        // Connect to selected device
+        async function connectToDevice(device) {
+            const status = document.getElementById('status');
+            try {
+                bluetoothDevice = device;
+                const server = await bluetoothDevice.gatt.connect();
+                
+                // Try to get the first available service
+                const services = await server.getPrimaryServices();
+                if (services.length > 0) {
+                    const characteristics = await services[0].getCharacteristics();
+                    if (characteristics.length > 0) {
+                        bluetoothCharacteristic = characteristics[0];
+                        status.textContent = `Connected to ${device.name || 'printer'}!`;
+                        status.className = 'status success';
+                        hideBluetoothMenu();
+                    }
+                }
+            } catch (error) {
+                status.textContent = `Connection failed: ${error.message}`;
+                status.className = 'status error';
+            }
+        }
+
+        // Rest of the original functions
+        function addItem() {
+            const nameInput = document.querySelector('.item-name');
+            const priceInput = document.querySelector('.item-price');
+            const quantityInput = document.querySelector('.item-quantity');
+
+            if (nameInput.value && priceInput.value && quantityInput.value) {
+                const item = {
+                    name: nameInput.value,
+                    price: parseFloat(priceInput.value),
+                    quantity: parseInt(quantityInput.value)
+                };
+
+                items.push(item);
+                updateItemsList();
+                updatePreview();
+
+                // Clear inputs
+                nameInput.value = '';
+                priceInput.value = '';
+                quantityInput.value = '1';
+            }
+        }
+
+        function removeItem(index) {
+            items.splice(index, 1);
+            updateItemsList();
+            updatePreview();
+        }
+
+        function updateItemsList() {
+            const list = document.getElementById('items-list');
+            list.innerHTML = '';
+
+            items.forEach((item, index) => {
+                const row = document.createElement('div');
+                row.className = 'item-row';
+                row.innerHTML = `
+                    <input type="text" value="${item.name}" readonly>
+                    <input type="number" value="${item.price}" readonly>
+                    <input type="number" value="${item.quantity}" readonly>
+                    <button class="remove-item" onclick="removeItem(${index})">Remove</button>
+                `;
+                list.appendChild(row);
+            });
+        }
+
+        function updatePreview() {
+            const preview = document.getElementById('preview');
+            const receipt = generateReceipt();
+            preview.textContent = receipt;
+        }
+
+        function generateReceipt() {
+            const date = new Date().toLocaleString();
+            let receipt = `
+===============================
+         ORDER RECEIPT        
+===============================
+Date: ${date}
+-------------------------------
+`;
+
+            let total = 0;
+            items.forEach(item => {
+                const subtotal = item.price * item.quantity;
+                total += subtotal;
+                receipt += `
+${item.name}
+${item.quantity} x $${item.price.toFixed(2)} = $${subtotal.toFixed(2)}
+`;
+            });
+
+            receipt += `
+-------------------------------
+Total: $${total.toFixed(2)}
+===============================
+        Thank You!
+        Come Again!
+===============================
+`;
+
+            return receipt;
+        }
+
+        async function printReceipt() {
+            const status = document.getElementById('status');
+
+            if (!bluetoothCharacteristic) {
+                status.textContent = 'Please connect to a printer first!';
+                status.className = 'status error';
+                return;
+            }
+
+            try {
+                const receipt = generateReceipt();
+                const encoder = new TextEncoder();
+                const data = encoder.encode(receipt);
+                
+                // Send data in chunks
+                const CHUNK_SIZE = 20;
+                for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+                    const chunk = data.slice(i, i + CHUNK_SIZE);
+                    await bluetoothCharacteristic.writeValue(chunk);
+                }
+                
+                status.textContent = 'Receipt sent to printer!';
+                status.className = 'status success';
+            } catch (error) {
+                status.textContent = `Printing failed: ${error.message}`;
+                status.className = 'status error';
+                console.error('Printing error:', error);
+            }
+        }
+    </script>
+</body>
+</html>
